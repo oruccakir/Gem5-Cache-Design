@@ -27,10 +27,14 @@
  */
 
 #include "dogrudanonbellek.hh"
+
 #include "base/compiler.hh"
 #include "base/random.hh"
 #include "debug/DogrudanOnbellek.hh"
 #include "sim/system.hh"
+
+#include <iostream>  // just testing purpose
+using namespace std;
 
 namespace gem5
 {
@@ -50,6 +54,9 @@ DogrudanOnbellek::DogrudanOnbellek(const DogrudanOnbellekParams &params) :
     for (int i = 0; i < params.port_cpu_side_connection_count; ++i) {
         cpuPorts.emplace_back(name() + csprintf(".cpu_side[%d]", i), i, this);
     }
+
+    this->yazpolitika = params.yazpolitika; // get information whether write allocate or write no allocate
+
 }
 
 Port &
@@ -78,7 +85,7 @@ DogrudanOnbellek::CPUSidePort::sendPacket(PacketPtr pkt)
 
     // If we can't send the packet across the port, store it for later.
     DPRINTF(DogrudanOnbellek, "Sending %s to CPU\n", pkt->print());
-    if (!sendTimingResp(pkt)) {
+    if (!sendTimingResp(pkt)) {  
         DPRINTF(DogrudanOnbellek, "failed!\n");
         blockedPacket = pkt;
     }
@@ -157,8 +164,8 @@ DogrudanOnbellek::MemSidePort::sendPacket(PacketPtr pkt)
     panic_if(blockedPacket != nullptr, "Should never try to send if blocked!");
 
     // If we can't send the packet across the port, store it for later.
-    if (!sendTimingReq(pkt)) {
-        blockedPacket = pkt;
+    if (!sendTimingReq(pkt)) {  
+        blockedPacket = pkt;  
     }
 }
 
@@ -199,6 +206,25 @@ DogrudanOnbellek::handleRequest(PacketPtr pkt, int port_id)
 
     DPRINTF(DogrudanOnbellek, "Got request for addr %#x\n", pkt->getAddr());
 
+    // Here just for debugging purposes
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    Addr addr = pkt->getAddr();
+    CacheData *cache_data = new CacheData(addr,this->blockSize,this->capacity * this->blockSize,0);
+    DPRINTF(DogrudanOnbellek,"Addres hexa %s\n",cache_data->toHexadecimal(addr));
+    DPRINTF(DogrudanOnbellek, "Which row : %llu\n",cache_data->row_index);
+    DPRINTF(DogrudanOnbellek,"Addres tag %s\n",cache_data->address_tag);
+    DPRINTF(DogrudanOnbellek,"Block size : %#x\n",this->blockSize);
+    DPRINTF(DogrudanOnbellek,"Size access : %#x\n",this->capacity * this->blockSize);
+    DPRINTF(DogrudanOnbellek,"Policy %s\n",this->yazpolitika);
+    if(pkt->isWrite() == 1){
+        DPRINTF(DogrudanOnbellek,"Yazma isteği\n");
+    }
+    else if(pkt->isRead()){
+        DPRINTF(DogrudanOnbellek,"Okuma isteği\n");
+    }
+    delete cache_data; // because there is no need to store
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
     // This cache is now blocked waiting for the response to this packet.
     blocked = true;
 
@@ -219,34 +245,44 @@ DogrudanOnbellek::handleResponse(PacketPtr pkt)
 {
     assert(blocked);
     DPRINTF(DogrudanOnbellek, "Got response for addr %#x\n", pkt->getAddr());
-
+    
     // For now assume that inserts are off of the critical path and don't count
     // for any added latency.
-    insert(pkt);
 
-    stats.missLatency.sample(curTick() - missTime);
+    if(originalPacket != nullptr && (originalPacket->isRead() || (originalPacket->isWrite() && this->yazpolitika == "YAZVEAYIR"))){
 
-    // If we had to upgrade the request packet to a full cache line, now we
-    // can use that packet to construct the response.
-    if (originalPacket != nullptr) {
-        DPRINTF(DogrudanOnbellek, "Copying data from new packet to old\n");
-        // We had to upgrade a previous packet. We can functionally deal with
-        // the cache access now. It better be a hit.
-        [[maybe_unused]] bool hit = accessFunctional(originalPacket);
-        panic_if(!hit, "Should always hit after inserting");
-        originalPacket->makeResponse();
-        delete pkt; // We may need to delay this, I'm not sure.
-        pkt = originalPacket;
-        originalPacket = nullptr;
-    } // else, pkt contains the data it needs
+        // ıf yazpolitika is YAZVEAYIRMA then do not insert. However we need to write the data to memory in acesstiming function miss handling section
+
+        insert(pkt);
+
+        stats.missLatency.sample(curTick() - missTime);
+
+        // If we had to upgrade the request packet to a full cache line, now we
+        // can use that packet to construct the response.
+        if (originalPacket != nullptr) {
+            DPRINTF(DogrudanOnbellek, "Copying data from new packet to old\n");
+            DPRINTF(DogrudanOnbellek,"Address for old packet %#x\n",originalPacket->getAddr());
+            // We had to upgrade a previous packet. We can functionally deal with
+            // the cache access now. It better be a hit.
+            [[maybe_unused]] bool hit = accessFunctional(originalPacket);
+            panic_if(!hit, "Should always hit after inserting");
+            originalPacket->makeResponse();
+            delete pkt; // We may need to delay this, I'm not sure.
+            pkt = originalPacket;
+            originalPacket = nullptr;
+
+        } // else, pkt contains the data it needs
+
+    }
 
     sendResponse(pkt);
-
     return true;
+
 }
 
 void DogrudanOnbellek::sendResponse(PacketPtr pkt)
 {
+
     assert(blocked);
     DPRINTF(DogrudanOnbellek, "Sending resp for addr %#x\n", pkt->getAddr());
 
@@ -289,12 +325,13 @@ DogrudanOnbellek::accessTiming(PacketPtr pkt)
 
     if (hit) {
         // Respond to the CPU side
-        stats.hits++; // update stats
+        stats.bulmaSayisi++; // update stats
         DDUMP(DogrudanOnbellek, pkt->getConstPtr<uint8_t>(), pkt->getSize());
         pkt->makeResponse();
         sendResponse(pkt);
     } else {
-        stats.misses++; // update stats
+        
+        stats.iskaSayisi++; // update stats
         missTime = curTick();
         // Forward to the memory side.
         // We can't directly forward the packet unless it is exactly the size
@@ -304,9 +341,14 @@ DogrudanOnbellek::accessTiming(PacketPtr pkt)
         unsigned size = pkt->getSize();
         if (addr == block_addr && size == blockSize) {
             // Aligned and block size. We can just forward.
-            DPRINTF(DogrudanOnbellek, "forwarding packet\n");
+            DPRINTF(DogrudanOnbellek, "forwarding already aligned packet\n");
             memPort.sendPacket(pkt);
         } else {
+            if(pkt->isWrite())
+                DPRINTF(DogrudanOnbellek,"YAZMA MISS\n");
+            else
+                DPRINTF(DogrudanOnbellek,"OKUMA MISS\n");
+
             DPRINTF(DogrudanOnbellek, "Upgrading packet to block size\n");
             panic_if(addr - block_addr + size > blockSize,
                      "Cannot handle accesses that span multiple cache lines");
@@ -331,81 +373,121 @@ DogrudanOnbellek::accessTiming(PacketPtr pkt)
             // Save the old packet
             originalPacket = pkt;
 
-            DPRINTF(DogrudanOnbellek, "forwarding packet\n");
-            memPort.sendPacket(new_pkt);
+            DPRINTF(DogrudanOnbellek,"Original packet addr %#x\n",originalPacket->getAddr());
+            DPRINTF(DogrudanOnbellek,"Original packet write %d and read %d\n",originalPacket->isWrite(),originalPacket->isRead());
+            DPRINTF(DogrudanOnbellek,"New packet addr %#x\n",new_pkt->getAddr());
+
+
+            /*
+                Here and handleResponseFunctions are important for implementing yazpolitika PAY ATTENTION Crucial  !!!!!!!!!!!!!!!!!!!!!!!            
+            
+            */
+
+            // ıf writing policy yazveayır simply send new packet otherwise direcly write the data into the memory
+            if(originalPacket->isRead() || (originalPacket->isWrite() && this->yazpolitika == "YAZVEAYIR")){
+                DPRINTF(DogrudanOnbellek, "forwarding packet\n");
+                memPort.sendPacket(new_pkt);
+            }
+            else{
+                DPRINTF(DogrudanOnbellek, "Not forward write directly to memory\n");
+                // Write back the data.
+                memPort.sendPacket(pkt);  // important to send pkt not new_pkt crucial!!!!!!!!!!!!!!!!!!
+            }
+
         }
+        
     }
 }
+ 
 
 bool
 DogrudanOnbellek::accessFunctional(PacketPtr pkt)
 {
-    Addr block_addr = pkt->getBlockAddr(blockSize);
-    auto it = cacheStore.find(block_addr);
-    if (it != cacheStore.end()) {
+    // get packet address
+    Addr addr = pkt->getAddr();
+    // produce row_index and address tag and not create data becasue we do not insert
+    CacheData *cache_data = new CacheData(addr,this->blockSize,this->capacity * this->blockSize,0);
+    // search for given address via row index in cache data
+    auto iterator = direct_map_cacheStore.find(cache_data->row_index);
+    // if given row is not empty and given address tag is equal to cache data address tag then continue go if
+    if (iterator != direct_map_cacheStore.end() && iterator->second->address_tag == cache_data->address_tag) {
+
         if (pkt->isWrite()) {
             // Write the data into the block in the cache
-            pkt->writeDataToBlock(it->second, blockSize);
+            DPRINTF(DogrudanOnbellek,"Cache data was changed\n");
+            pkt->writeDataToBlock(iterator->second->data, blockSize);
         } else if (pkt->isRead()) {
             // Read the data out of the cache block into the packet
-            pkt->setDataFromBlock(it->second, blockSize);
+            DPRINTF(DogrudanOnbellek,"Cache data was read\n");
+            pkt->setDataFromBlock(iterator->second->data, blockSize);
         } else {
             panic("Unknown packet type!");
         }
+
+        delete cache_data; // we can delete beacuse we do not need any more
         return true;
     }
+
+    delete cache_data; // we can delete beacuse we do not need any more
+
     return false;
 }
+
 
 void
 DogrudanOnbellek::insert(PacketPtr pkt)
 {
+
     // The packet should be aligned.
     assert(pkt->getAddr() ==  pkt->getBlockAddr(blockSize));
-    // The address should not be in the cache
-    assert(cacheStore.find(pkt->getAddr()) == cacheStore.end());
+    // get packet address
+    Addr addr = pkt->getAddr();
+    // produce row_index and address tag and create data becasue we will insert important
+    CacheData *cache_data = new CacheData(addr,this->blockSize,this->capacity * this->blockSize,1);
+    // The address should not be in the cache if there their tag should be different                                // very important section
+    assert(direct_map_cacheStore.find(cache_data->row_index) == direct_map_cacheStore.end() || direct_map_cacheStore.find(cache_data->row_index)->second->address_tag != cache_data->address_tag );
     // The pkt should be a response
     assert(pkt->isResponse());
+    
+    DDUMP(DogrudanOnbellek, pkt->getConstPtr<uint8_t>(), blockSize);
 
-    if (cacheStore.size() >= capacity) {
-        // Select random thing to evict. This is a little convoluted since we
-        // are using a std::unordered_map. See http://bit.ly/2hrnLP2
-        int bucket, bucket_size;
-        do {
-            bucket = random_mt.random(0, (int)cacheStore.bucket_count() - 1);
-        } while ( (bucket_size = cacheStore.bucket_size(bucket)) == 0 );
-        auto block = std::next(cacheStore.begin(bucket),
-                               random_mt.random(0, bucket_size - 1));
-
-        DPRINTF(DogrudanOnbellek, "Removing addr %#x\n", block->first);
+    // if there is already cache data in cache given row index get and deallocate it 
+    // we know that if there is already another data in given row_index their tag should be different but their row index should be same beacuse we have direct mapped cache
+    auto iterator = direct_map_cacheStore.find(cache_data->row_index);
+    if(iterator != direct_map_cacheStore.end()){
+        CacheData *removedCache_data = iterator->second;
+        DPRINTF(DogrudanOnbellek, "Removing addr %#x\n", removedCache_data->address);
+        DPRINTF(DogrudanOnbellek, "Removing\n");
+        DPRINTF(DogrudanOnbellek,"Removed Addres hexa %#x\n",removedCache_data->toHexadecimal(removedCache_data->address));
+        DPRINTF(DogrudanOnbellek, "Removed Which row : %llu\n",removedCache_data->row_index);
+        DPRINTF(DogrudanOnbellek,"Removed Addres tag %s\n",removedCache_data->address_tag);
 
         // Write back the data.
         // Create a new request-packet pair
         RequestPtr req = std::make_shared<Request>(
-            block->first, blockSize, 0, 0);
+            removedCache_data->address, blockSize, 0, 0);
 
         PacketPtr new_pkt = new Packet(req, MemCmd::WritebackDirty, blockSize);
-        new_pkt->dataDynamic(block->second); // This will be deleted later
+        new_pkt->dataDynamic(removedCache_data->data); // This will be deleted later
 
         DPRINTF(DogrudanOnbellek, "Writing packet back %s\n", pkt->print());
         // Send the write to memory
         memPort.sendPacket(new_pkt);
 
         // Delete this entry
-        cacheStore.erase(block->first);
+        direct_map_cacheStore.erase(cache_data->row_index);
     }
-
-    DPRINTF(DogrudanOnbellek, "Inserting %s\n", pkt->print());
-    DDUMP(DogrudanOnbellek, pkt->getConstPtr<uint8_t>(), blockSize);
-
-    // Allocate space for the cache block data
-    uint8_t *data = new uint8_t[blockSize];
-
+     
     // Insert the data and address into the cache store
-    cacheStore[pkt->getAddr()] = data;
+    DPRINTF(DogrudanOnbellek, "Inserting %s\n", pkt->print());
+    DPRINTF(DogrudanOnbellek,"Inserted Addres hexa %s\n",cache_data->toHexadecimal(addr));
+    DPRINTF(DogrudanOnbellek, "Inserted Which row : %llu\n",cache_data->row_index);
+    DPRINTF(DogrudanOnbellek,"Inserted Addres tag %s\n",cache_data->address_tag);
 
+    direct_map_cacheStore[cache_data->row_index] = cache_data; // very important section
     // Write the data into the cache
-    pkt->writeDataToBlock(data, blockSize);
+    pkt->writeDataToBlock(cache_data->data, blockSize);  // also important
+            
 }
 
 AddrRangeList
@@ -426,15 +508,82 @@ DogrudanOnbellek::sendRangeChange() const
 
 DogrudanOnbellek::DogrudanOnbellekStats::DogrudanOnbellekStats(statistics::Group *parent)
       : statistics::Group(parent),
-      ADD_STAT(hits, statistics::units::Count::get(), "Number of hits"),
-      ADD_STAT(misses, statistics::units::Count::get(), "Number of misses"),
+      ADD_STAT(bulmaSayisi, statistics::units::Count::get(), "Number of bulma"),
+      ADD_STAT(iskaSayisi, statistics::units::Count::get(), "Number of iska"),
       ADD_STAT(missLatency, statistics::units::Tick::get(),
-               "Ticks for misses to the cache"),
+               "Ticks for iska to the cache"),
       ADD_STAT(hitRatio, statistics::units::Ratio::get(),
-               "The ratio of hits to the total accesses to the cache",
-               hits / (hits + misses))
+               "The ratio of bulma to the total accesses to the cache",
+               bulmaSayisi / (bulmaSayisi + iskaSayisi))
 {
     missLatency.init(16); // number of buckets
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DogrudanOnbellek::CacheData::CacheData(Addr addr,uint64_t block_size,uint64_t cache_size,bool allocate_data){
+
+    if(allocate_data == 1)
+        this->data = new uint8_t[block_size];  // create data depends on flag allocate
+
+    this->address = addr;  // stores the address
+
+    string address = toHexadecimal(addr); // get addres as string hexadecimal
+    //prune the 0x section
+    //address = address.substr(2);
+    // store the how many bit need to be allocated for byte choosing
+    uint64_t which_byte_choose = (uint64_t) log2(block_size);
+    // store the total_row number information
+    uint64_t number_of_rows = (uint64_t)(cache_size /  (double) block_size);
+    // store the how many bit need to be allocated for row choosing
+    uint64_t which_row_choose = (uint64_t) log2(number_of_rows);
+    //convert hexadecimal address to binary address
+    address = fromHexaDecimalToBinary(address);
+    // get index info as string from address and store the index information
+    string index_str = address.substr(64-(which_row_choose+which_byte_choose),which_row_choose);
+    this->row_index = fromBinaryToUint64(index_str);
+    // get tag info and store 
+    this->address_tag = fromBinaryToHexadecimal(address.substr(0,64-(which_byte_choose+which_row_choose)));
+
+}
+
+uint64_t
+DogrudanOnbellek::CacheData::fromBinaryToUint64(const std::string& binaryString){
+    // Using std::bitset to convert the binary string to uint64_t
+    return bitset<64>(binaryString).to_ullong();
+}
+
+string
+DogrudanOnbellek::CacheData::fromBinaryToHexadecimal(const std::string& binaryString){
+    // Convert binary string to uint64_t
+    bitset<64> bitset(binaryString);
+    uint64_t decimalValue = bitset.to_ullong();
+
+    // Convert decimal value to hexadecimal string
+    stringstream hexStream;
+    hexStream << std::hex << decimalValue;
+    return hexStream.str();
+}
+
+string
+DogrudanOnbellek::CacheData::fromHexaDecimalToBinary(const std::string& hexString){
+    // create hexstream
+    istringstream hexStream(hexString);
+
+    uint64_t hexValue;
+    //convert int value
+    hexStream >> std::hex >> hexValue;
+    // turn into binary
+    bitset<64> binaryValue(hexValue);
+    //return as string
+    return binaryValue.to_string();
+}
+
+string
+DogrudanOnbellek :: CacheData:: toHexadecimal(unsigned long int num){
+    stringstream ss;
+    ss << hex << num;
+    return ss.str();
+}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 } // namespace gem5

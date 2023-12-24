@@ -1,6 +1,5 @@
-# -*- mode:python -*-
-
-# Copyright (c) 2006 The Regents of The University of Michigan
+# -*- coding: utf-8 -*-
+# Copyright (c) 2017 Jason Lowe-Power
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -26,36 +25,33 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('*')
+from m5.params import *
+from m5.proxy import *
+from m5.objects.ClockedObject import ClockedObject
 
-SimObject('Cache.py', sim_objects=[
-    'WriteAllocator', 'BaseCache', 'Cache', 'NoncoherentCache'],
-    enums=['Clusivity'])
-SimObject('DogrudanOnbellek.py', sim_objects=['DogrudanOnbellek']) #change
+class KumeliOnbellek(ClockedObject):
 
-Source('base.cc')
-Source('cache.cc')
-Source('cache_blk.cc')
-Source('mshr.cc')
-Source('mshr_queue.cc')
-Source('noncoherent_cache.cc')
-Source('write_queue.cc')
-Source('write_queue_entry.cc')
-Source('dogrudanonbellek.cc') #change
+    type = "KumeliOnbellek"
+    cxx_header = "mem/cache/kumelionbellek.hh"
+    cxx_class = "gem5::KumeliOnbellek"
 
-DebugFlag('Cache')
-DebugFlag('CacheComp')
-DebugFlag('CachePort')
-DebugFlag('CacheRepl')
-DebugFlag('CacheTags')
-DebugFlag('CacheVerbose')
-DebugFlag('HWPrefetch')
-DebugFlag('MSHR')
-DebugFlag('HWPrefetchQueue')
-DebugFlag('DogrudanOnbellek') #change
+    # Vector port example. Both the instruction and data ports connect to this
+    # port which is automatically split out into two ports.
+    cpu_side = VectorResponsePort("CPU side port, receives requests")
+    mem_side = RequestPort("Memory side port, sends requests")
 
-# CacheTags is so outrageously verbose, printing the cache's entire tag
-# array on each timing access, that you should probably have to ask for
-# it explicitly even above and beyond CacheAll.
-CompoundFlag('CacheAll', ['Cache', 'CacheComp', 'CachePort', 'CacheRepl',
-                          'CacheVerbose', 'HWPrefetch', 'MSHR'])
+    gecikme = Param.Cycles(1, "Cycles taken on a hit or to resolve a miss")
+    
+    boyut = Param.MemorySize("1kB", "The size of the cache")
+
+    yol = Param.Int(1,"Cache total path number")
+
+    cikarpolitika = Param.String("RASTGELE","Data extraction policy")
+
+    yazpolitika = Param.String("YAZVEAYIR","Write allocate policy")
+
+    system = Param.System(Parent.any, "The system this cache is part of")
+
+
+
+   

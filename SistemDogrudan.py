@@ -56,7 +56,7 @@ system.cpu = TimingSimpleCPU()
 system.membus = SystemXBar()
 
 # Create a simple cache
-system.cache = DogrudanOnbellek(boyut="1kB",gecikme=1,yazpolitika="YAZVEAYIR")
+system.cache = DogrudanOnbellek(boyut="4kB",gecikme=1,yazpolitika="YAZVEAYIRMA")
 
 # Connect the I and D cache ports of the CPU to the memobj.
 # Since cpu_side is a vector port, each time one of these is connected, it will
@@ -103,6 +103,6 @@ root = Root(full_system=False, system=system)
 # instantiate all of the objects we've created above
 m5.instantiate()
 
-print("Beginning Lanet olasi simulation!")
+print("Beginning Cache simulation!")
 exit_event = m5.simulate()
 print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))

@@ -42,7 +42,7 @@ class DogrudanOnbellek(ClockedObject):
 
     gecikme = Param.Cycles(1, "Cycles taken on a hit or to resolve a miss")
     
-    boyut = Param.MemorySize("16kB", "The size of the cache")
+    boyut = Param.MemorySize("1kB", "The size of the cache")
 
     yazpolitika = Param.String("YAZVEAYIR","Write allocate policy")
 

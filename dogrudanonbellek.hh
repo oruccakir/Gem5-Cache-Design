@@ -36,6 +36,14 @@
 #include "params/DogrudanOnbellek.hh"
 #include "sim/clocked_object.hh"
 
+#include <iostream>
+#include <bitset>
+#include <sstream>
+#include <string>
+#include <cmath>
+
+using namespace std;
+
 namespace gem5
 {
 
@@ -291,16 +299,13 @@ class DogrudanOnbellek : public ClockedObject
     /// For tracking the miss latency
     Tick missTime;
 
-    /// An incredibly simple cache storage. Maps block addresses to data
-    std::unordered_map<Addr, uint8_t*> cacheStore;
-
     /// Cache statistics
   protected:
     struct DogrudanOnbellekStats : public statistics::Group
     {
         DogrudanOnbellekStats(statistics::Group *parent);
-        statistics::Scalar hits;
-        statistics::Scalar misses;
+        statistics::Scalar bulmaSayisi;
+        statistics::Scalar iskaSayisi;
         statistics::Histogram missLatency;
         statistics::Formula hitRatio;
     } stats;
@@ -323,6 +328,43 @@ class DogrudanOnbellek : public ClockedObject
      */
     Port &getPort(const std::string &if_name,
                   PortID idx=InvalidPortID) override;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // Info class for storing addres information for direct mapped cache. stores row_index and tag value for every address
+    class CacheData{
+
+      public:
+        uint64_t row_index;   // direct mapped cache row_index
+        string address_tag; // address_tag for cache
+        uint8_t *data;   // holds the packet which will be stored
+        Addr address;   // holds address information
+        // Constructor for Info class
+        CacheData(Addr addr,uint64_t block_size,uint64_t cache_size,bool allocate_data);
+
+        // converts given string into binary string representation
+        string fromHexaDecimalToBinary(const std::string& hexString);
+
+        // converts given string int hexadeciaml string representation
+        string fromBinaryToHexadecimal(const std::string& binaryString);
+
+        // converts given string into uint64
+        uint64_t fromBinaryToUint64(const std::string& binaryString);
+
+        // converts given unsigned long number into hexadecimal format
+        string toHexadecimal(unsigned long int num);
+
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// For direct Mapped cache Maps block indexes to data;
+    map<uint64_t,DogrudanOnbellek::CacheData*> direct_map_cacheStore;     // Cache data includes pkt data and its tag for comparison
+
+    string yazpolitika; // for miss handling write policy information
+
+   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 };
 
